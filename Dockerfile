@@ -25,16 +25,31 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install minimal runtime dependencies
+# Install ALL necessary runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r appuser && useradd -r -g appuser appuser \
-    && chown -R appuser:appuser /app
+    libgcc-s1 \
+    libc6 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy binary only (no assets needed)
-COPY --from=builder /app/target/release/vk-service /app/vk-service
+# Create app user and set permissions
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Copy binary with correct permissions
+COPY --from=builder --chown=appuser:appuser /app/target/release/vk-service /app/vk-service
+RUN chmod +x /app/vk-service
+
+# Create a startup script for debugging
+RUN echo '#!/bin/sh\n\
+echo "=== CONTAINER STARTING ==="\n\
+echo "User: $(whoami)"\n\
+echo "Binary exists: $(ls -la /app/vk-service)"\n\
+echo "Binary executable: $(test -x /app/vk-service && echo YES || echo NO)"\n\
+echo "Starting application..."\n\
+exec /app/vk-service' > /app/start.sh && \
+    chmod +x /app/start.sh && \
+    chown appuser:appuser /app/start.sh
 
 # Switch to non-root user
 USER appuser
@@ -42,5 +57,5 @@ USER appuser
 # Expose the port that Cloud Run expects
 EXPOSE 8080
 
-# Run the binary
-ENTRYPOINT ["/app/vk-service"]
+# Use the startup script
+ENTRYPOINT ["/app/start.sh"]

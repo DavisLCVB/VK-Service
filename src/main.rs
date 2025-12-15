@@ -43,6 +43,11 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
+    // Initialize AWS SDK crypto provider (required for aws-sdk-s3)
+    // This must be called before any AWS SDK operations
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+
     let server_id =
         std::env::var("SERVER_ID").expect("ERROR: SERVER_ID environment variable must be set");
 
@@ -91,7 +96,9 @@ async fn main() {
                 .expect("ERROR: Failed to create Redis client. Check REDIS_URL format.");
             redis::aio::ConnectionManager::new(redis_client)
                 .await
-                .expect("ERROR: Failed to connect to Redis. Check REDIS_URL and network connectivity.")
+                .expect(
+                    "ERROR: Failed to connect to Redis. Check REDIS_URL and network connectivity.",
+                )
         }
     );
     tracing::info!("Database connections established");

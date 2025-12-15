@@ -29,14 +29,16 @@ impl SupabaseStorageService {
             "supabase-storage",
         );
 
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        // Build S3 config directly without loading from environment
+        // This avoids network calls to AWS metadata service
+        let config = aws_sdk_s3::config::Builder::new()
             .credentials_provider(credentials)
             .region(Region::new(secrets.region))
             .endpoint_url(&secrets.endpoint)
-            .load()
-            .await;
+            .force_path_style(true) // Required for S3-compatible services like Supabase
+            .build();
 
-        let client = Client::new(&config);
+        let client = Client::from_conf(config);
 
         Ok(Self {
             client,

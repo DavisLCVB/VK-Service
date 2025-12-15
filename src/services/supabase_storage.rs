@@ -1,5 +1,9 @@
 use async_trait::async_trait;
-use reqwest::{multipart, Client};
+use aws_sdk_s3::{
+    config::{Credentials, Region},
+    primitives::ByteStream,
+    Client,
+};
 
 use crate::{
     application::{error::ApplicationError, services::StorageService},
@@ -12,19 +16,32 @@ use crate::{
 
 pub struct SupabaseStorageService {
     client: Client,
-    storage_url: String,
-    api_key: String,
     bucket_name: String,
 }
 
 impl SupabaseStorageService {
-    pub fn new(secrets: SupabaseSecrets) -> Self {
-        Self {
-            client: Client::new(),
-            storage_url: secrets.storage_url.trim_end_matches('/').to_string(),
-            api_key: secrets.api_key,
+    pub async fn new(secrets: SupabaseSecrets) -> Result<Self, StorageError> {
+        let credentials = Credentials::new(
+            &secrets.access_key_id,
+            &secrets.secret_access_key,
+            None,
+            None,
+            "supabase-storage",
+        );
+
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .credentials_provider(credentials)
+            .region(Region::new(secrets.region))
+            .endpoint_url(&secrets.endpoint)
+            .load()
+            .await;
+
+        let client = Client::new(&config);
+
+        Ok(Self {
+            client,
             bucket_name: secrets.bucket_name,
-        }
+        })
     }
 
     fn generate_file_path(&self, filename: &str) -> String {
@@ -54,34 +71,19 @@ impl StorageService for SupabaseStorageService {
     async fn upload(&self, file_data: FileData) -> Result<FileMetadata, ApplicationError> {
         let file_path = self.generate_file_path(&file_data.filename);
 
-        let file_part = multipart::Part::bytes(file_data.content.clone())
-            .file_name(file_data.filename.clone())
-            .mime_str(&file_data.mime_type)
-            .map_err(|e| StorageError::InternalError(e.to_string()))?;
+        let byte_stream = ByteStream::from(file_data.content.clone());
 
-        let form = multipart::Form::new().part("file", file_part);
-
-        let url = format!(
-            "{}/object/{}/{}",
-            self.storage_url, self.bucket_name, file_path
-        );
-
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("apikey", &self.api_key)
-            .multipart(form)
+        self.client
+            .put_object()
+            .bucket(&self.bucket_name)
+            .key(&file_path)
+            .body(byte_stream)
+            .content_type(&file_data.mime_type)
             .send()
             .await
-            .map_err(StorageError::from)?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(
-                StorageError::ProviderError(format!("Upload failed: {}", error_text)).into(),
-            );
-        }
+            .map_err(|e| {
+                StorageError::ProviderError(format!("S3 upload failed: {}", e))
+            })?;
 
         Ok(FileMetadata {
             file_id: file_path,
@@ -93,117 +95,92 @@ impl StorageService for SupabaseStorageService {
     }
 
     async fn download(&self, file_id: &str) -> Result<Vec<u8>, ApplicationError> {
-        let url = format!(
-            "{}/object/{}/{}",
-            self.storage_url, self.bucket_name, file_id
-        );
-
         let response = self
             .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("apikey", &self.api_key)
+            .get_object()
+            .bucket(&self.bucket_name)
+            .key(file_id)
             .send()
             .await
-            .map_err(StorageError::from)?;
-
-        if response.status().as_u16() == 404 {
-            return Err(StorageError::NotFound(file_id.to_string()).into());
-        }
-
-        if !response.status().is_success() {
-            return Err(StorageError::ProviderError(format!(
-                "Download failed with status: {}",
-                response.status()
-            ))
-            .into());
-        }
+            .map_err(|e| {
+                let error_str = e.to_string();
+                if error_str.contains("NoSuchKey") || error_str.contains("404") {
+                    StorageError::NotFound(file_id.to_string())
+                } else {
+                    StorageError::ProviderError(format!("S3 download failed: {}", e))
+                }
+            })?;
 
         let bytes = response
-            .bytes()
+            .body
+            .collect()
             .await
-            .map_err(|e| StorageError::NetworkError(e.to_string()))?;
+            .map_err(|e| StorageError::NetworkError(e.to_string()))?
+            .into_bytes();
 
         Ok(bytes.to_vec())
     }
 
     async fn delete(&self, file_id: &str) -> Result<(), ApplicationError> {
-        let url = format!(
-            "{}/object/{}/{}",
-            self.storage_url, self.bucket_name, file_id
-        );
-
-        let response = self
+        // First check if the object exists
+        let _head = self
             .client
-            .delete(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("apikey", &self.api_key)
+            .head_object()
+            .bucket(&self.bucket_name)
+            .key(file_id)
             .send()
             .await
-            .map_err(StorageError::from)?;
+            .map_err(|e| {
+                let error_str = e.to_string();
+                if error_str.contains("NotFound") || error_str.contains("404") {
+                    StorageError::NotFound(file_id.to_string())
+                } else {
+                    StorageError::ProviderError(format!("S3 head object failed: {}", e))
+                }
+            })?;
 
-        if response.status().as_u16() == 404 {
-            return Err(StorageError::NotFound(file_id.to_string()).into());
-        }
-
-        if !response.status().is_success() {
-            return Err(StorageError::ProviderError(format!(
-                "Delete failed with status: {}",
-                response.status()
-            ))
-            .into());
-        }
+        // If exists, delete it
+        self.client
+            .delete_object()
+            .bucket(&self.bucket_name)
+            .key(file_id)
+            .send()
+            .await
+            .map_err(|e| {
+                StorageError::ProviderError(format!("S3 delete failed: {}", e))
+            })?;
 
         Ok(())
     }
 
     async fn get_metadata(&self, file_id: &str) -> Result<FileMetadata, ApplicationError> {
-        let url = format!(
-            "{}/object/{}/{}",
-            self.storage_url, self.bucket_name, file_id
-        );
-
         let response = self
             .client
-            .head(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("apikey", &self.api_key)
+            .head_object()
+            .bucket(&self.bucket_name)
+            .key(file_id)
             .send()
             .await
-            .map_err(StorageError::from)?;
+            .map_err(|e| {
+                let error_str = e.to_string();
+                if error_str.contains("NotFound") || error_str.contains("404") {
+                    StorageError::NotFound(file_id.to_string())
+                } else {
+                    StorageError::ProviderError(format!("S3 head object failed: {}", e))
+                }
+            })?;
 
-        if response.status().as_u16() == 404 {
-            return Err(StorageError::NotFound(file_id.to_string()).into());
-        }
-
-        if !response.status().is_success() {
-            return Err(StorageError::ProviderError(format!(
-                "Get metadata failed with status: {}",
-                response.status()
-            ))
-            .into());
-        }
-
-        let content_length = response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(0);
-
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
+        let size = response.content_length().unwrap_or(0) as u64;
+        let mime_type = response
+            .content_type()
             .unwrap_or("application/octet-stream")
             .to_string();
-
         let filename = file_id.split('/').last().map(|s| s.to_string());
 
         Ok(FileMetadata {
             file_id: file_id.to_string(),
-            size: content_length,
-            mime_type: content_type,
+            size,
+            mime_type,
             filename,
             provider: "supabase".to_string(),
         })

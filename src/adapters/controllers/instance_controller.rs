@@ -119,7 +119,7 @@ impl InstanceController {
                 old_provider, local_config.provider
             );
 
-            match services::create_storage_service(&local_config.provider, &secrets) {
+            match services::create_storage_service(&local_config.provider, &secrets).await {
                 Ok(new_service) => {
                     storage_service_state.replace(new_service);
                     info!(

@@ -13,7 +13,7 @@ use crate::{
     domain::config::{local::Provider, secrets::Secrets},
 };
 
-pub fn create_storage_service(
+pub async fn create_storage_service(
     provider: &Provider,
     secrets: &Secrets,
 ) -> Result<Arc<dyn StorageService>, StorageError> {
@@ -31,7 +31,7 @@ pub fn create_storage_service(
                 StorageError::InvalidCredentials("Supabase secrets not found".to_string())
             })?;
 
-            let service = SupabaseStorageService::new(supabase_secrets.clone());
+            let service = SupabaseStorageService::new(supabase_secrets.clone()).await?;
             Ok(Arc::new(service))
         }
     }

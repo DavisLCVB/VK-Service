@@ -138,6 +138,7 @@ async fn main() {
     let (storage_service, token_repo) = tokio::join!(
         async {
             services::create_storage_service(&local_config.provider, &secrets)
+                .await
                 .expect("Failed to create storage service")
         },
         async {

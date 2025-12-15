@@ -10,10 +10,14 @@ pub struct GDriveSecrets {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SupabaseSecrets {
-    #[serde(rename = "storageUrl")]
-    pub storage_url: String,
-    #[serde(rename = "apiKey")]
-    pub api_key: String,
+    #[serde(rename = "endpoint")]
+    pub endpoint: String,
+    #[serde(rename = "region")]
+    pub region: String,
+    #[serde(rename = "accessKeyId")]
+    pub access_key_id: String,
+    #[serde(rename = "secretAccessKey")]
+    pub secret_access_key: String,
     #[serde(rename = "bucketName")]
     pub bucket_name: String,
 }

@@ -19,16 +19,27 @@ RUN rm -rf src
 COPY src ./src
 RUN cargo build --release --locked
 
-# Runtime stage with distroless for minimal size and security
-FROM gcr.io/distroless/cc-debian12:nonroot
+# Runtime stage with minimal debian for better compatibility
+FROM debian:bookworm-slim
 
 WORKDIR /app
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
 
 # Copy binary only (no assets needed)
 COPY --from=builder /app/target/release/vk-service /app/vk-service
 
+# Switch to non-root user
+USER appuser
+
 # Expose the port that Cloud Run expects
 EXPOSE 8080
 
-# Run as nonroot user (already set in distroless:nonroot)
+# Run the binary
 ENTRYPOINT ["/app/vk-service"]

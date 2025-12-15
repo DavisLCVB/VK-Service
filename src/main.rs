@@ -43,11 +43,16 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
-    let server_id = std::env::var("SERVER_ID").expect("SERVER_ID must be set");
+    let server_id = std::env::var("SERVER_ID")
+        .expect("ERROR: SERVER_ID environment variable must be set");
 
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL")
+        .expect("ERROR: DATABASE_URL environment variable must be set");
 
-    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
+    let redis_url = std::env::var("REDIS_URL")
+        .expect("ERROR: REDIS_URL environment variable must be set");
+
+    tracing::info!("Starting vk-service with SERVER_ID: {}", server_id);
 
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "8080".to_string())
@@ -70,19 +75,23 @@ async fn main() {
         CorsLayer::permissive()
     };
 
+    tracing::info!("Connecting to PostgreSQL...");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .min_connections(1)
         .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(10))
+        .acquire_timeout(std::time::Duration::from_secs(30))
         .connect(&database_url)
         .await
-        .expect("Failed to connect to database");
+        .expect("ERROR: Failed to connect to PostgreSQL database. Check DATABASE_URL and network connectivity.");
+    tracing::info!("PostgreSQL connection established");
 
-    let redis_client =
-        redis::Client::open(redis_url.as_str()).expect("Failed to create Redis client");
+    tracing::info!("Connecting to Redis...");
+    let redis_client = redis::Client::open(redis_url.as_str())
+        .expect("ERROR: Failed to create Redis client. Check REDIS_URL format.");
     let redis_conn_manager = redis::aio::ConnectionManager::new(redis_client)
         .await
-        .expect("Failed to connect to Redis");
+        .expect("ERROR: Failed to connect to Redis. Check REDIS_URL and network connectivity.");
+    tracing::info!("Redis connection established");
 
     let secrets_repo =
         Arc::new(PgSecretsRepository::new(pool.clone())) as Arc<dyn SecretsRepository>;
@@ -92,11 +101,13 @@ async fn main() {
         Arc::new(PgLocalConfigRepository::new(pool.clone())) as Arc<dyn LocalConfigRepository>;
 
     // Load all configurations in parallel for faster startup
+    tracing::info!("Loading configurations from database...");
     let (local_config_result, secrets_result, global_config_result) = tokio::join!(
         local_config_repo.get_local_config(&server_id),
         secrets_repo.get_secrets(),
         global_config_repo.get_global_config()
     );
+    tracing::info!("Configuration loading complete");
 
     // Handle local config: create with defaults if not found
     let local_config = match local_config_result {

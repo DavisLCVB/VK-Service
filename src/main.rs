@@ -75,23 +75,28 @@ async fn main() {
         CorsLayer::permissive()
     };
 
-    tracing::info!("Connecting to PostgreSQL...");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(30))
-        .connect(&database_url)
-        .await
-        .expect("ERROR: Failed to connect to PostgreSQL database. Check DATABASE_URL and network connectivity.");
-    tracing::info!("PostgreSQL connection established");
+    // Connect to PostgreSQL and Redis in parallel for faster startup
+    tracing::info!("Connecting to databases...");
+    let (pool, redis_conn_manager) = tokio::join!(
+        async {
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(5)
+                .acquire_timeout(std::time::Duration::from_secs(30))
+                .connect(&database_url)
+                .await
+                .expect("ERROR: Failed to connect to PostgreSQL database. Check DATABASE_URL and network connectivity.")
+        },
+        async {
+            let redis_client = redis::Client::open(redis_url.as_str())
+                .expect("ERROR: Failed to create Redis client. Check REDIS_URL format.");
+            redis::aio::ConnectionManager::new(redis_client)
+                .await
+                .expect("ERROR: Failed to connect to Redis. Check REDIS_URL and network connectivity.")
+        }
+    );
+    tracing::info!("Database connections established");
 
-    tracing::info!("Connecting to Redis...");
-    let redis_client = redis::Client::open(redis_url.as_str())
-        .expect("ERROR: Failed to create Redis client. Check REDIS_URL format.");
-    let redis_conn_manager = redis::aio::ConnectionManager::new(redis_client)
-        .await
-        .expect("ERROR: Failed to connect to Redis. Check REDIS_URL and network connectivity.");
-    tracing::info!("Redis connection established");
-
+    // Initialize repositories
     let secrets_repo =
         Arc::new(PgSecretsRepository::new(pool.clone())) as Arc<dyn SecretsRepository>;
     let global_config_repo =
@@ -129,11 +134,16 @@ async fn main() {
     let secrets = secrets_result.expect("Failed to load secrets");
     let global_config = global_config_result.expect("Failed to load global config");
 
-    let storage_service = services::create_storage_service(&local_config.provider, &secrets)
-        .expect("Failed to create storage service");
-
-    let token_repo =
-        Arc::new(RedisTokenRepository::new(redis_conn_manager)) as Arc<dyn TokenRepository>;
+    // Create storage service and token repository in parallel
+    let (storage_service, token_repo) = tokio::join!(
+        async {
+            services::create_storage_service(&local_config.provider, &secrets)
+                .expect("Failed to create storage service")
+        },
+        async {
+            Arc::new(RedisTokenRepository::new(redis_conn_manager)) as Arc<dyn TokenRepository>
+        }
+    );
 
     let app_state = AppState {
         server_id,

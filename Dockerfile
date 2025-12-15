@@ -1,5 +1,5 @@
-# Build stage
-FROM rust:latest as builder
+# Build stage - use latest Rust with bookworm base for newer Cargo
+FROM rust:bookworm as builder
 
 WORKDIR /app
 

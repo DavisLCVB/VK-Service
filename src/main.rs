@@ -77,7 +77,6 @@ async fn main() {
 
     tracing::info!("Connecting to PostgreSQL...");
     let pool = sqlx::postgres::PgPoolOptions::new()
-        .min_connections(1)
         .max_connections(5)
         .acquire_timeout(std::time::Duration::from_secs(30))
         .connect(&database_url)

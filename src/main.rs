@@ -40,8 +40,15 @@ async fn hello_world() -> &'static str {
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing FIRST to capture all logs
-    tracing_subscriber::fmt::init();
+    // Initialize tracing to write to stdout with immediate flushing for Cloud Run
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stdout)
+        .with_ansi(false)
+        .init();
+
+    // Force flush and print to ensure logs are visible
+    println!("=== VK-SERVICE STARTING ===");
+    eprintln!("=== VK-SERVICE STARTING (stderr) ===");
 
     tracing::info!("Starting vk-service initialization...");
 
@@ -89,6 +96,7 @@ async fn main() {
     };
 
     // Connect to PostgreSQL and Redis in parallel for faster startup
+    println!(">>> Connecting to databases...");
     tracing::info!("Connecting to databases...");
     let (pool, redis_conn_manager) = tokio::join!(
         async {
@@ -109,6 +117,7 @@ async fn main() {
                 )
         }
     );
+    println!(">>> Database connections established");
     tracing::info!("Database connections established");
 
     // Initialize repositories
@@ -250,7 +259,9 @@ async fn main() {
         .await
         .expect("Failed to bind to port");
 
+    println!(">>> ✓ Server successfully bound and listening on 0.0.0.0:{}", port);
     tracing::info!("✓ Server successfully bound and listening on 0.0.0.0:{}", port);
+    println!(">>> Application startup complete - ready to accept requests");
     tracing::info!("Application startup complete - ready to accept requests");
 
     axum::serve(listener, router)

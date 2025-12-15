@@ -36,6 +36,7 @@ impl SupabaseStorageService {
             .region(Region::new(secrets.region))
             .endpoint_url(&secrets.endpoint)
             .force_path_style(true) // Required for S3-compatible services like Supabase
+            .behavior_version_latest()
             .build();
 
         let client = Client::from_conf(config);
@@ -46,25 +47,19 @@ impl SupabaseStorageService {
         })
     }
 
-    fn generate_file_path(&self, filename: &str) -> String {
+    fn generate_file_path(&self, _filename: &str) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Generate a unique hash-based ID similar to GDrive implementation
+        // Just the timestamp in hex format without extension
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis();
+            .as_nanos();
 
-        let safe_filename = filename
-            .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c == '.' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
-
-        format!("{}/{}", timestamp, safe_filename)
+        // Create a hash-like ID using hex timestamp
+        // This ensures uniqueness without using directory separators or extensions
+        format!("{:x}", timestamp)
     }
 }
 
@@ -84,7 +79,8 @@ impl StorageService for SupabaseStorageService {
             .send()
             .await
             .map_err(|e| {
-                StorageError::ProviderError(format!("S3 upload failed: {}", e))
+                tracing::error!("S3 upload failed - Error details: {:?}", e);
+                StorageError::ProviderError(format!("S3 upload failed: {:?}", e))
             })?;
 
         Ok(FileMetadata {

@@ -17,6 +17,7 @@ RUN rm -rf src
 
 # Copy real source and rebuild (only app code, deps are cached)
 COPY src ./src
+RUN touch src/main.rs
 RUN cargo build --release --locked
 
 # Runtime stage with minimal debian for better compatibility

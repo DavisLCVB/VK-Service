@@ -1,0 +1,8 @@
+/target
+.shuttle*
+Secrets*.toml
+CLAUDE.md
+GEMINI.md
+google_credentials.json
+*.sql
+.env*

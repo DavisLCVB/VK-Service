@@ -1,0 +1,10 @@
+target/
+.env
+.env.*
+!.env.example
+.git/
+.gitignore
+*.md
+!CLAUDE.md
+Secrets.toml
+.shuttle/

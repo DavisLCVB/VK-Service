@@ -32,7 +32,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{Any, CorsLayer};
 
 async fn hello_world() -> &'static str {
     "Hello, world!"
@@ -43,14 +43,14 @@ async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
-    let server_id = std::env::var("SERVER_ID")
-        .expect("ERROR: SERVER_ID environment variable must be set");
+    let server_id =
+        std::env::var("SERVER_ID").expect("ERROR: SERVER_ID environment variable must be set");
 
     let database_url = std::env::var("DATABASE_URL")
         .expect("ERROR: DATABASE_URL environment variable must be set");
 
-    let redis_url = std::env::var("REDIS_URL")
-        .expect("ERROR: REDIS_URL environment variable must be set");
+    let redis_url =
+        std::env::var("REDIS_URL").expect("ERROR: REDIS_URL environment variable must be set");
 
     tracing::info!("Starting vk-service with SERVER_ID: {}", server_id);
 
@@ -115,7 +115,10 @@ async fn main() {
             config
         }
         Err(_) => {
-            tracing::info!("Local config not found, creating default config for server {}", server_id);
+            tracing::info!(
+                "Local config not found, creating default config for server {}",
+                server_id
+            );
             local_config_repo
                 .upsert_local_config(&server_id, LocalConfigDTO::default())
                 .await

@@ -70,9 +70,10 @@ impl HealthController {
             }
         };
 
-        // Collect system metrics
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        // Collect system metrics (optimized - only refresh what's needed)
+        let mut sys = System::new();
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
 
         let cpu_usage = sys.global_cpu_usage();
         let memory_used = sys.used_memory();

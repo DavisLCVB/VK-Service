@@ -1,5 +1,5 @@
 # Build stage
-FROM rustlang/rust:nightly-slim as builder
+FROM rust:1.83-slim as builder
 
 WORKDIR /app
 
@@ -9,35 +9,26 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
+# Copy manifests and create dummy src for dependency caching
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release --locked
+RUN rm -rf src
 
-# Copy source code
+# Copy real source and rebuild (only app code, deps are cached)
 COPY src ./src
-COPY assets ./assets
+RUN cargo build --release --locked
 
-# Build the application in release mode
-RUN cargo build --release
-
-# Runtime stage
-FROM debian:bookworm-slim
+# Runtime stage with distroless for minimal size and security
+FROM gcr.io/distroless/cc-debian12:nonroot
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy the binary from builder
+# Copy binary only (no assets needed)
 COPY --from=builder /app/target/release/vk-service /app/vk-service
-
-# Copy assets if needed
-COPY --from=builder /app/assets /app/assets
 
 # Expose the port that Cloud Run expects
 EXPOSE 8080
 
-# Run the binary
-CMD ["/app/vk-service"]
+# Run as nonroot user (already set in distroless:nonroot)
+ENTRYPOINT ["/app/vk-service"]

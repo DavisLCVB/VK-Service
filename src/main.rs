@@ -32,6 +32,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use tower_http::cors::{CorsLayer, Any};
 
 async fn hello_world() -> &'static str {
     "Hello, world!"
@@ -39,9 +40,6 @@ async fn hello_world() -> &'static str {
 
 #[tokio::main]
 async fn main() {
-    // Load .env file in development (optional in production where env vars are set directly)
-    dotenvy::dotenv().ok();
-
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
@@ -56,8 +54,26 @@ async fn main() {
         .parse::<u16>()
         .expect("PORT must be a valid u16");
 
+    // Configure CORS
+    let cors = if let Ok(allowed_origins) = std::env::var("CORS_ALLOWED_ORIGINS") {
+        // Parse comma-separated origins
+        let origins: Vec<_> = allowed_origins
+            .split(',')
+            .map(|s| s.trim().parse().expect("Invalid CORS origin"))
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        // Allow all origins if not specified (only for development)
+        CorsLayer::permissive()
+    };
+
     let pool = sqlx::postgres::PgPoolOptions::new()
+        .min_connections(1)
         .max_connections(5)
+        .acquire_timeout(std::time::Duration::from_secs(10))
         .connect(&database_url)
         .await
         .expect("Failed to connect to database");
@@ -75,24 +91,30 @@ async fn main() {
     let local_config_repo =
         Arc::new(PgLocalConfigRepository::new(pool.clone())) as Arc<dyn LocalConfigRepository>;
 
-    // Startup upsert with default local config
-    local_config_repo
-        .upsert_local_config(&server_id, LocalConfigDTO::default())
-        .await
-        .expect("Failed to initialize local config");
+    // Load all configurations in parallel for faster startup
+    let (local_config_result, secrets_result, global_config_result) = tokio::join!(
+        local_config_repo.get_local_config(&server_id),
+        secrets_repo.get_secrets(),
+        global_config_repo.get_global_config()
+    );
 
-    let secrets = secrets_repo
-        .get_secrets()
-        .await
-        .expect("Failed to load secrets");
-    let global_config = global_config_repo
-        .get_global_config()
-        .await
-        .expect("Failed to load global config");
-    let local_config = local_config_repo
-        .get_local_config(&server_id)
-        .await
-        .expect("Failed to load local config");
+    // Handle local config: create with defaults if not found
+    let local_config = match local_config_result {
+        Ok(config) => {
+            tracing::info!("Loaded existing local config for server {}", server_id);
+            config
+        }
+        Err(_) => {
+            tracing::info!("Local config not found, creating default config for server {}", server_id);
+            local_config_repo
+                .upsert_local_config(&server_id, LocalConfigDTO::default())
+                .await
+                .expect("Failed to create default local config")
+        }
+    };
+
+    let secrets = secrets_result.expect("Failed to load secrets");
+    let global_config = global_config_result.expect("Failed to load global config");
 
     let storage_service = services::create_storage_service(&local_config.provider, &secrets)
         .expect("Failed to create storage service");
@@ -164,10 +186,11 @@ async fn main() {
                 .delete(FileController::delete_file),
         );
 
-    // Combine routes
+    // Combine routes and add CORS layer
     let router = Router::new()
         .merge(protected_routes)
         .merge(public_routes)
+        .layer(cors)
         .with_state(app_state);
 
     // Start the server

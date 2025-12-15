@@ -40,22 +40,30 @@ async fn hello_world() -> &'static str {
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing
+    // Initialize tracing FIRST to capture all logs
     tracing_subscriber::fmt::init();
+
+    tracing::info!("Starting vk-service initialization...");
 
     // Initialize AWS SDK crypto provider (required for aws-sdk-s3)
     // This must be called before any AWS SDK operations
+    tracing::info!("Initializing Rustls crypto provider...");
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    tracing::info!("Rustls crypto provider initialized");
 
 
+    tracing::info!("Loading environment variables...");
     let server_id =
         std::env::var("SERVER_ID").expect("ERROR: SERVER_ID environment variable must be set");
+    tracing::info!("SERVER_ID loaded: {}", server_id);
 
     let database_url = std::env::var("DATABASE_URL")
         .expect("ERROR: DATABASE_URL environment variable must be set");
+    tracing::info!("DATABASE_URL loaded");
 
     let redis_url =
         std::env::var("REDIS_URL").expect("ERROR: REDIS_URL environment variable must be set");
+    tracing::info!("REDIS_URL loaded");
 
     tracing::info!("Starting vk-service with SERVER_ID: {}", server_id);
 
@@ -112,13 +120,14 @@ async fn main() {
         Arc::new(PgLocalConfigRepository::new(pool.clone())) as Arc<dyn LocalConfigRepository>;
 
     // Load all configurations in parallel for faster startup
-    tracing::info!("Loading configurations from database...");
+    tracing::info!("Loading configurations from database for server_id: {}", server_id);
     let (local_config_result, secrets_result, global_config_result) = tokio::join!(
         local_config_repo.get_local_config(&server_id),
         secrets_repo.get_secrets(),
         global_config_repo.get_global_config()
     );
-    tracing::info!("Configuration loading complete");
+    tracing::info!("Configuration loading complete. Local config: {:?}, Secrets: present, Global config: present",
+        local_config_result.is_ok());
 
     // Handle local config: create with defaults if not found
     let local_config = match local_config_result {
@@ -141,17 +150,28 @@ async fn main() {
     let secrets = secrets_result.expect("Failed to load secrets");
     let global_config = global_config_result.expect("Failed to load global config");
 
+    tracing::info!("Creating storage service for provider: {:?}", local_config.provider);
+
     // Create storage service and token repository in parallel
-    let (storage_service, token_repo) = tokio::join!(
+    let (storage_service_result, token_repo) = tokio::join!(
         async {
-            services::create_storage_service(&local_config.provider, &secrets)
-                .await
-                .expect("Failed to create storage service")
+            services::create_storage_service(&local_config.provider, &secrets).await
         },
         async {
             Arc::new(RedisTokenRepository::new(redis_conn_manager)) as Arc<dyn TokenRepository>
         }
     );
+
+    let storage_service = match storage_service_result {
+        Ok(service) => {
+            tracing::info!("Storage service created successfully");
+            service
+        }
+        Err(e) => {
+            tracing::error!("Failed to create storage service: {:?}", e);
+            panic!("Failed to create storage service: {:?}", e);
+        }
+    };
 
     let app_state = AppState {
         server_id,
@@ -225,11 +245,13 @@ async fn main() {
         .with_state(app_state);
 
     // Start the server
+    tracing::info!("Binding to port {}...", port);
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
         .await
         .expect("Failed to bind to port");
 
-    tracing::info!("Server listening on 0.0.0.0:{}", port);
+    tracing::info!("✓ Server successfully bound and listening on 0.0.0.0:{}", port);
+    tracing::info!("Application startup complete - ready to accept requests");
 
     axum::serve(listener, router)
         .await

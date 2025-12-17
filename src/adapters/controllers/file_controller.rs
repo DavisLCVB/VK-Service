@@ -75,8 +75,13 @@ impl FileController {
     ) -> Result<(StatusCode, Json<UploadFileResponse>), ApplicationError> {
         // VALIDAR TOKEN ANTES DE PARSEAR MULTIPART (fail-fast)
         let token = headers
-            .get("X-Upload-Token")
+            .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
+            .and_then(|s| {
+                s.strip_prefix("Bearer ")
+                    .or_else(|| s.strip_prefix("bearer "))
+            })
+            .or_else(|| headers.get("X-Upload-Token").and_then(|v| v.to_str().ok()))
             .ok_or(ApplicationError::Unauthorized)?;
 
         let token_user_id = app_state
@@ -93,14 +98,10 @@ impl FileController {
         let mut user_id: Option<String> = None;
         let mut description: Option<String> = None;
 
-        while let Some(field) = multipart
-            .next_field()
-            .await
-            .map_err(|e| {
-                warn!("Invalid multipart data: {}", e);
-                ApplicationError::BadRequest("Invalid request format".to_string())
-            })?
-        {
+        while let Some(field) = multipart.next_field().await.map_err(|e| {
+            warn!("Invalid multipart data: {}", e);
+            ApplicationError::BadRequest("Invalid request format".to_string())
+        })? {
             let name = field.name().unwrap_or("").to_string();
 
             match name.as_str() {
@@ -150,26 +151,22 @@ impl FileController {
             }
         }
 
-        let file_bytes = file_bytes
-            .ok_or_else(|| {
-                warn!("Missing required 'file' field in upload");
-                ApplicationError::BadRequest("Missing required field".to_string())
-            })?;
-        let filename = filename
-            .ok_or_else(|| {
-                warn!("Missing required 'filename' field in upload");
-                ApplicationError::BadRequest("Missing required field".to_string())
-            })?;
-        let mime_type = mime_type
-            .ok_or_else(|| {
-                warn!("Missing required 'mime_type' field in upload");
-                ApplicationError::BadRequest("Missing required field".to_string())
-            })?;
-        let file_type = file_type
-            .ok_or_else(|| {
-                warn!("Missing required 'type' field in upload");
-                ApplicationError::BadRequest("Missing required field".to_string())
-            })?;
+        let file_bytes = file_bytes.ok_or_else(|| {
+            warn!("Missing required 'file' field in upload");
+            ApplicationError::BadRequest("Missing required field".to_string())
+        })?;
+        let filename = filename.ok_or_else(|| {
+            warn!("Missing required 'filename' field in upload");
+            ApplicationError::BadRequest("Missing required field".to_string())
+        })?;
+        let mime_type = mime_type.ok_or_else(|| {
+            warn!("Missing required 'mime_type' field in upload");
+            ApplicationError::BadRequest("Missing required field".to_string())
+        })?;
+        let file_type = file_type.ok_or_else(|| {
+            warn!("Missing required 'type' field in upload");
+            ApplicationError::BadRequest("Missing required field".to_string())
+        })?;
 
         let (max_size, mime_types, temp_file_life) = {
             let gc = app_state.global_config.lock().unwrap();

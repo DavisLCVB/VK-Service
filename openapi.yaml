@@ -1,0 +1,799 @@
+openapi: 3.0.3
+info:
+  title: VK-Service API
+  description: |
+    File storage service with multi-provider support (Supabase S3, Google Drive).
+    Provides user management, file uploads/downloads, and storage quota tracking.
+  version: 1.0.0
+  contact:
+    name: VK-Service
+    url: https://github.com/yourusername/vk-service
+
+servers:
+  - url: https://your-service.run.app/api/v1
+    description: Production server
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Service health and status endpoints
+  - name: Instances
+    description: Service instance management
+  - name: Users
+    description: User management and quota tracking
+  - name: Files
+    description: File upload, download, and management
+  - name: Tokens
+    description: Upload token generation
+
+components:
+  securitySchemes:
+    ServiceSecret:
+      type: apiKey
+      in: header
+      name: X-KV-SECRET
+      description: Service secret key for protected endpoints
+
+    UploadToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for file uploads (use X-Upload-Token header)
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: string
+          description: Additional error details
+      required:
+        - error
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        server_id:
+          type: string
+          format: uuid
+          example: ff664d2f-cbc6-4436-81bf-e7ddff81f19d
+        timestamp:
+          type: string
+          format: date-time
+          example: 2025-12-15T16:00:00Z
+      required:
+        - status
+        - server_id
+        - timestamp
+
+    Instance:
+      type: object
+      properties:
+        server_id:
+          type: string
+          format: uuid
+          example: ff664d2f-cbc6-4436-81bf-e7ddff81f19d
+        provider:
+          type: string
+          enum: [supabase, gdrive]
+          example: supabase
+        created_at:
+          type: string
+          format: date-time
+          example: 2025-12-15T16:00:00Z
+      required:
+        - server_id
+        - provider
+
+    InstanceUpdate:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [supabase, gdrive]
+          example: supabase
+
+    User:
+      type: object
+      properties:
+        uid:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        file_count:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 5
+        total_space:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 1073741824
+          description: Total storage quota in bytes
+        used_space:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 52428800
+          description: Used storage in bytes
+        created_at:
+          type: string
+          format: date-time
+          example: 2025-12-15T16:00:00Z
+      required:
+        - uid
+        - file_count
+        - total_space
+        - used_space
+
+    CreateUserRequest:
+      type: object
+      properties:
+        uid:
+          type: string
+          format: uuid
+          description: Optional user UUID. If not provided, a new UUID will be generated
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        file_count:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 10
+        total_space:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 2147483648
+        used_space:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 104857600
+
+    FileMetadata:
+      type: object
+      properties:
+        file_id:
+          type: string
+          example: 1a2b3c4d5e6f7890
+          description: Unique file identifier (format varies by provider)
+        file_name:
+          type: string
+          example: document.pdf
+        mime_type:
+          type: string
+          example: application/pdf
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 1048576
+          description: File size in bytes
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: 550e8400-e29b-41d4-a716-446655440000
+          description: User ID for permanent files, null for temporal files
+        description:
+          type: string
+          nullable: true
+          example: Important document
+        server_id:
+          type: string
+          format: uuid
+          example: ff664d2f-cbc6-4436-81bf-e7ddff81f19d
+        uploaded_at:
+          type: string
+          format: date-time
+          example: 2025-12-15T16:00:00Z
+        download_count:
+          type: integer
+          minimum: 0
+          example: 3
+        last_access:
+          type: string
+          format: date-time
+          example: 2025-12-15T16:30:00Z
+        delete_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: 2025-12-15T17:00:00Z
+          description: Deletion time for temporal files, null for permanent files
+      required:
+        - file_id
+        - file_name
+        - mime_type
+        - size
+
+    UploadTokenRequest:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: Optional user UUID for user-specific uploads
+          example: 550e8400-e29b-41d4-a716-446655440000
+
+    UploadTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+          description: JWT token for file upload
+        expires_at:
+          type: string
+          format: date-time
+          example: 2025-12-15T17:00:00Z
+          description: Token expiration time (1 hour from creation)
+      required:
+        - token
+        - expires_at
+
+    UpdateFileRequest:
+      type: object
+      properties:
+        filename:
+          type: string
+          example: renamed-document.pdf
+          description: New filename for the file
+
+    CleanupResponse:
+      type: object
+      properties:
+        deleted_count:
+          type: integer
+          minimum: 0
+          example: 5
+        message:
+          type: string
+          example: Expired files cleaned up successfully
+      required:
+        - deleted_count
+        - message
+
+  parameters:
+    ServerIdPath:
+      name: server_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique server instance identifier
+      example: ff664d2f-cbc6-4436-81bf-e7ddff81f19d
+
+    UserIdPath:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: User unique identifier
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+    FileIdPath:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: File unique identifier
+      example: 1a2b3c4d5e6f7890
+
+  responses:
+    BadRequest:
+      description: Bad request - Invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Invalid request format
+            code: BAD_REQUEST
+
+    Unauthorized:
+      description: Unauthorized - Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Invalid or expired token
+            code: UNAUTHORIZED
+
+    NotFound:
+      description: Not found - Resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Resource not found
+            code: NOT_FOUND
+
+    PayloadTooLarge:
+      description: Payload too large - File exceeds maximum size
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: File size exceeds maximum allowed
+            code: PAYLOAD_TOO_LARGE
+
+    InsufficientStorage:
+      description: Insufficient storage - User quota exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: User storage quota exceeded
+            code: INSUFFICIENT_STORAGE
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Internal server error
+            code: INTERNAL_ERROR
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Check the health status of the service instance
+      operationId: getHealth
+      security:
+        - ServiceSecret: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /instances:
+    get:
+      tags:
+        - Instances
+      summary: Get all instances
+      description: Retrieve information about all service instances
+      operationId: getAllInstances
+      security:
+        - ServiceSecret: []
+      responses:
+        '200':
+          description: List of service instances
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Instance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /instances/{server_id}:
+    get:
+      tags:
+        - Instances
+      summary: Get instance
+      description: Get detailed information about a specific service instance
+      operationId: getInstance
+      security:
+        - ServiceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/ServerIdPath'
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      tags:
+        - Instances
+      summary: Update instance
+      description: Update configuration for a specific service instance
+      operationId: updateInstance
+      security:
+        - ServiceSecret: []
+      parameters:
+        - $ref: '#/components/parameters/ServerIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceUpdate'
+      responses:
+        '200':
+          description: Instance updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users:
+    post:
+      tags:
+        - Users
+      summary: Create user
+      description: Create a new user with default storage quota
+      operationId: createUser
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/{user_id}:
+    get:
+      tags:
+        - Users
+      summary: Get user
+      description: Retrieve user information and storage usage
+      operationId: getUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      tags:
+        - Users
+      summary: Update user
+      description: Update user storage quota or usage information
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Users
+      summary: Delete user
+      description: Delete a user and all associated files
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '204':
+          description: User deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/{user_id}/files:
+    get:
+      tags:
+        - Users
+      summary: Get user files
+      description: List all files belonging to a user
+      operationId: getUserFiles
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: List of user files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileMetadata'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files/token:
+    post:
+      tags:
+        - Tokens
+      summary: Generate upload token
+      description: Generate a temporary JWT token for file upload (valid for 1 hour)
+      operationId: generateUploadToken
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadTokenRequest'
+      responses:
+        '200':
+          description: Upload token generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files:
+    post:
+      tags:
+        - Files
+      summary: Upload file
+      description: |
+        Upload a file to storage. Requires a valid upload token in the X-Upload-Token header.
+
+        **File Types:**
+        - `temporal`: Temporary files that will be auto-deleted after configured time
+        - `permanent`: Permanent files associated with a user account (requires user_id)
+
+        **Multipart Fields:**
+        - `file` (required): The file binary data
+        - `filename` (required): Original filename
+        - `mime_type` (required): File MIME type (must be in allowed list)
+        - `type` (required): File type - either "temporal" or "permanent"
+        - `user_id` (conditional): Required for permanent files, must match token user_id
+        - `description` (optional): File description
+      operationId: uploadFile
+      parameters:
+        - name: X-Upload-Token
+          in: header
+          required: true
+          schema:
+            type: string
+          description: Upload token obtained from /files/token endpoint
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File binary data
+                filename:
+                  type: string
+                  example: document.pdf
+                  description: Original filename
+                mime_type:
+                  type: string
+                  example: application/pdf
+                  description: File MIME type
+                type:
+                  type: string
+                  enum: [temporal, permanent]
+                  example: permanent
+                  description: File type
+                user_id:
+                  type: string
+                  format: uuid
+                  example: 550e8400-e29b-41d4-a716-446655440000
+                  description: User ID (required for permanent files)
+                description:
+                  type: string
+                  example: Important document
+                  description: Optional file description
+              required:
+                - file
+                - filename
+                - mime_type
+                - type
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '507':
+          $ref: '#/components/responses/InsufficientStorage'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Files
+      summary: Cleanup expired files
+      description: Delete files with expired tokens (maintenance endpoint)
+      operationId: cleanupExpiredFiles
+      responses:
+        '200':
+          description: Cleanup completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files/{file_id}:
+    get:
+      tags:
+        - Files
+      summary: Get file metadata
+      description: Retrieve file metadata without downloading content
+      operationId: getFileMetadata
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: File metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    patch:
+      tags:
+        - Files
+      summary: Update file metadata
+      description: Update file metadata (e.g., rename file)
+      operationId: updateFileMetadata
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFileRequest'
+      responses:
+        '200':
+          description: File metadata updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Files
+      summary: Delete file
+      description: Delete a file from storage permanently
+      operationId: deleteFile
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '204':
+          description: File deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files/{file_id}/content:
+    get:
+      tags:
+        - Files
+      summary: Download file
+      description: Download file content with appropriate content-type header
+      operationId: downloadFile
+      parameters:
+        - $ref: '#/components/parameters/FileIdPath'
+      responses:
+        '200':
+          description: File content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: File MIME type
+              example: application/pdf
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment header with original filename
+              example: attachment; filename="document.pdf"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
